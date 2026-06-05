@@ -1,18 +1,30 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+
+type Event = {
+  id: string;
+  name: string;
+};
 
 type Task = {
   id: string;
   title: string;
   status: string;
   assigned_member_id: string | null;
+  event_id: string | null;
 };
 
 type TaskStatus = "unclaimed" | "in_progress" | "done";
 
 type PendingAction = "claim" | "complete" | "release";
+
+type TaskSection = {
+  key: string;
+  title: string;
+  tasks: Task[];
+};
 
 function memberStorageKey(boardId: string) {
   return `claimd_member_${boardId}`;
@@ -69,12 +81,43 @@ async function parseApiResponse(
   return { ok: true };
 }
 
+function buildTaskSections(events: Event[], tasks: Task[]): TaskSection[] {
+  const eventIds = new Set(events.map((e) => e.id));
+  const sections: TaskSection[] = [];
+
+  for (const event of events) {
+    const eventTasks = tasks.filter((t) => t.event_id === event.id);
+    if (eventTasks.length > 0) {
+      sections.push({
+        key: event.id,
+        title: event.name,
+        tasks: eventTasks,
+      });
+    }
+  }
+
+  const generalTasks = tasks.filter(
+    (t) => !t.event_id || !eventIds.has(t.event_id)
+  );
+  if (generalTasks.length > 0) {
+    sections.push({
+      key: "general",
+      title: "General",
+      tasks: generalTasks,
+    });
+  }
+
+  return sections;
+}
+
 export default function TaskList({
   tasks,
+  events,
   boardId,
   memberNames,
 }: {
   tasks: Task[];
+  events: Event[];
   boardId: string;
   memberNames: Record<string, string>;
 }) {
@@ -83,6 +126,11 @@ export default function TaskList({
     taskId: string;
     action: PendingAction;
   } | null>(null);
+
+  const sections = useMemo(
+    () => buildTaskSections(events, tasks),
+    [events, tasks]
+  );
 
   function isPending(taskId: string, action: PendingAction) {
     return pending?.taskId === taskId && pending.action === action;
@@ -162,65 +210,74 @@ export default function TaskList({
     );
   }
 
-  return (
-    <ul className="flex flex-col gap-3">
-      {tasks.map((task) => {
-        const status = resolveTaskStatus(task);
-        const isUnclaimed = status === "unclaimed";
-        const isInProgress = status === "in_progress";
-        const assigneeLabel = task.assigned_member_id
-          ? `claimed by ${memberNames[task.assigned_member_id] ?? "someone"}`
-          : "nobody yet";
+  function renderTaskCard(task: Task) {
+    const status = resolveTaskStatus(task);
+    const isUnclaimed = status === "unclaimed";
+    const isInProgress = status === "in_progress";
+    const assigneeLabel = task.assigned_member_id
+      ? `claimed by ${memberNames[task.assigned_member_id] ?? "someone"}`
+      : "nobody yet";
 
-        return (
-          <li
-            key={task.id}
-            className="rounded-xl bg-white p-4 shadow-sm shadow-[#1A1A1A]/5"
+    return (
+      <li
+        key={task.id}
+        className="rounded-xl bg-white p-4 shadow-sm shadow-[#1A1A1A]/5"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="font-medium text-[#1A1A1A]">{task.title}</p>
+            <p className="mt-1 text-sm text-[#1A1A1A]/50">{assigneeLabel}</p>
+          </div>
+          <StatusBadge status={status} />
+        </div>
+
+        {isUnclaimed && (
+          <button
+            type="button"
+            onClick={() => claimTask(task.id)}
+            disabled={isTaskBusy(task.id)}
+            className="mt-4 rounded-lg bg-[#E8542C] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#D14A26] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <p className="font-medium text-[#1A1A1A]">{task.title}</p>
-                <p className="mt-1 text-sm text-[#1A1A1A]/50">
-                  {assigneeLabel}
-                </p>
-              </div>
-              <StatusBadge status={status} />
-            </div>
+            {isPending(task.id, "claim") ? "Claiming…" : "Claim"}
+          </button>
+        )}
 
-            {isUnclaimed && (
-              <button
-                type="button"
-                onClick={() => claimTask(task.id)}
-                disabled={isTaskBusy(task.id)}
-                className="mt-4 rounded-lg bg-[#E8542C] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#D14A26] disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isPending(task.id, "claim") ? "Claiming…" : "Claim"}
-              </button>
-            )}
+        {isInProgress && (
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => completeTask(task.id)}
+              disabled={isTaskBusy(task.id)}
+              className="rounded-lg border border-green-600 px-3 py-1.5 text-xs font-medium text-green-700 transition-colors hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isPending(task.id, "complete") ? "Saving…" : "Mark done"}
+            </button>
+            <button
+              type="button"
+              onClick={() => releaseTask(task.id)}
+              disabled={isTaskBusy(task.id)}
+              className="text-xs text-[#1A1A1A]/45 transition-colors hover:text-[#1A1A1A]/70 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isPending(task.id, "release") ? "Releasing…" : "Release"}
+            </button>
+          </div>
+        )}
+      </li>
+    );
+  }
 
-            {isInProgress && (
-              <div className="mt-4 flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => completeTask(task.id)}
-                  disabled={isTaskBusy(task.id)}
-                  className="rounded-lg border border-green-600 px-3 py-1.5 text-xs font-medium text-green-700 transition-colors hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isPending(task.id, "complete") ? "Saving…" : "Mark done"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => releaseTask(task.id)}
-                  disabled={isTaskBusy(task.id)}
-                  className="text-xs text-[#1A1A1A]/45 transition-colors hover:text-[#1A1A1A]/70 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isPending(task.id, "release") ? "Releasing…" : "Release"}
-                </button>
-              </div>
-            )}
-          </li>
-        );
-      })}
-    </ul>
+  return (
+    <div className="flex flex-col gap-8">
+      {sections.map((section) => (
+        <section key={section.key}>
+          <h3 className="font-display text-xl font-bold tracking-tight text-[#1A1A1A]">
+            {section.title}
+          </h3>
+          <ul className="mt-3 flex flex-col gap-3">
+            {section.tasks.map((task) => renderTaskCard(task))}
+          </ul>
+        </section>
+      ))}
+    </div>
   );
 }

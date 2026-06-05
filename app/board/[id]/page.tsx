@@ -13,13 +13,19 @@ export default async function BoardPage({
   const [
     { data: board },
     { data: members },
+    { data: events },
     { data: tasks },
   ] = await Promise.all([
     supabase.from("boards").select("name").eq("id", id).single(),
     supabase.from("members").select("id, name").eq("board_id", id),
     supabase
+      .from("events")
+      .select("id, name")
+      .eq("board_id", id)
+      .order("created_at"),
+    supabase
       .from("tasks")
-      .select("id, title, status, assigned_member_id")
+      .select("id, title, status, assigned_member_id, event_id")
       .eq("board_id", id),
   ]);
 
@@ -52,6 +58,7 @@ export default async function BoardPage({
           ) : (
             <TaskList
               tasks={tasks}
+              events={events ?? []}
               boardId={id}
               memberNames={memberNames}
             />

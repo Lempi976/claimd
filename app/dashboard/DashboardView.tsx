@@ -119,7 +119,7 @@ export default function DashboardView() {
               {boards.map((board) => (
                 <li key={board.id}>
                   <Link
-                    href={`/board/${board.id}`}
+                    href={`/dashboard/${board.id}`}
                     className="block rounded-xl border border-transparent bg-white px-5 py-4 shadow-sm shadow-[#1A1A1A]/5 transition-colors hover:border-[#E8542C]/25 hover:bg-[#FFFDFB]"
                   >
                     <span className="font-display text-lg font-semibold text-[#1A1A1A]">
