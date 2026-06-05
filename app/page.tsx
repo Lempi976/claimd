@@ -35,7 +35,7 @@ export default function Home() {
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
             <Link
-              href="/login"
+              href="/signup"
               className="inline-flex items-center justify-center rounded-xl bg-[#E8542C] px-6 py-3.5 text-sm font-medium text-white transition-colors hover:bg-[#D14A26]"
             >
               Sign up
