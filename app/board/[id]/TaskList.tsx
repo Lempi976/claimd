@@ -14,14 +14,18 @@ type Task = {
   id: string;
   title: string;
   status: string;
-  assigned_member_id: string | null;
   event_id: string | null;
 };
 
 type Claim = {
   id: string;
   task_id: string;
-  member_id: string;
+  claimer_name: string;
+};
+
+type StoredMember = {
+  id: string;
+  name: string;
 };
 
 type TaskStatus = "unclaimed" | "in_progress" | "done";
@@ -38,12 +42,34 @@ function memberStorageKey(boardId: string) {
   return `claimd_member_${boardId}`;
 }
 
-function resolveTaskStatus(task: Task): TaskStatus {
-  if (task.status === "done") return "done";
-  if (task.status === "in_progress" || task.assigned_member_id) {
-    return "in_progress";
+function getStoredMember(boardId: string): StoredMember | null {
+  const raw = localStorage.getItem(memberStorageKey(boardId));
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as StoredMember;
+    if (parsed.id && parsed.name) return parsed;
+  } catch {
+    return null;
   }
+
+  return null;
+}
+
+function resolveTaskStatus(task: Task, taskClaims: Claim[]): TaskStatus {
+  if (task.status === "done") return "done";
+  if (taskClaims.length > 0) return "in_progress";
   return "unclaimed";
+}
+
+function groupClaimsByTask(claims: Claim[]): Map<string, Claim[]> {
+  const map = new Map<string, Claim[]>();
+  for (const claim of claims) {
+    const existing = map.get(claim.task_id) ?? [];
+    existing.push(claim);
+    map.set(claim.task_id, existing);
+  }
+  return map;
 }
 
 function StatusBadge({ status }: { status: TaskStatus }) {
@@ -118,57 +144,34 @@ function buildTaskSections(events: Event[], tasks: Task[]): TaskSection[] {
   return sections;
 }
 
-function applyClaimsToTasks(tasks: Task[], claims: Claim[]): Task[] {
-  const claimMap = new Map(claims.map((claim) => [claim.task_id, claim.member_id]));
-
-  return tasks.map((task) => {
-    if (!claimMap.has(task.id)) {
-      return task;
-    }
-
-    const memberId = claimMap.get(task.id)!;
-
-    return {
-      ...task,
-      assigned_member_id: memberId,
-      status: task.status === "done" ? "done" : "in_progress",
-    };
-  });
-}
-
 export default function TaskList({
-  tasks: initialTasks,
+  tasks,
   events,
   boardId,
-  memberNames,
 }: {
   tasks: Task[];
   events: Event[];
   boardId: string;
-  memberNames: Record<string, string>;
 }) {
   const router = useRouter();
-  const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [claims, setClaims] = useState<Claim[]>([]);
   const [pending, setPending] = useState<{
     taskId: string;
     action: PendingAction;
   } | null>(null);
 
-  useEffect(() => {
-    setTasks(initialTasks);
-  }, [initialTasks]);
+  const taskIds = useMemo(() => tasks.map((task) => task.id), [tasks]);
 
-  const fetchClaims = useCallback(async (taskIds: string[]) => {
-    if (taskIds.length === 0) {
+  const fetchClaims = useCallback(async (ids: string[]) => {
+    if (ids.length === 0) {
       setClaims([]);
       return;
     }
 
     const { data, error } = await supabase
       .from("claims")
-      .select("id, task_id, member_id")
-      .in("task_id", taskIds);
+      .select("id, task_id, claimer_name")
+      .in("task_id", ids);
 
     if (!error && data) {
       setClaims(data);
@@ -176,8 +179,6 @@ export default function TaskList({
   }, []);
 
   useEffect(() => {
-    const taskIds = tasks.map((task) => task.id);
-
     void fetchClaims(taskIds);
 
     const channel = supabase
@@ -186,24 +187,21 @@ export default function TaskList({
         "postgres_changes",
         { event: "*", schema: "public", table: "claims" },
         () => {
-          void fetchClaims(tasks.map((task) => task.id));
+          void fetchClaims(taskIds);
         }
       )
-      .subscribe();
+      .subscribe((status) => console.log("Realtime status:", status));
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [boardId, tasks, fetchClaims]);
+  }, [boardId, taskIds, fetchClaims]);
 
-  const displayTasks = useMemo(
-    () => applyClaimsToTasks(tasks, claims),
-    [tasks, claims]
-  );
+  const claimsByTask = useMemo(() => groupClaimsByTask(claims), [claims]);
 
   const sections = useMemo(
-    () => buildTaskSections(events, displayTasks),
-    [events, displayTasks]
+    () => buildTaskSections(events, tasks),
+    [events, tasks]
   );
 
   function isPending(taskId: string, action: PendingAction) {
@@ -219,7 +217,8 @@ export default function TaskList({
     action: PendingAction,
     endpoint: string,
     body: Record<string, string>,
-    fallbackError: string
+    fallbackError: string,
+    options?: { refreshPage?: boolean }
   ) {
     setPending({ taskId, action });
     try {
@@ -235,33 +234,28 @@ export default function TaskList({
         return;
       }
 
-      router.refresh();
+      if (options?.refreshPage) {
+        router.refresh();
+      }
     } finally {
       setPending(null);
     }
   }
 
   async function claimTask(taskId: string) {
-    const raw = localStorage.getItem(memberStorageKey(boardId));
-    if (!raw) {
+    const member = getStoredMember(boardId);
+    if (!member) {
       alert("Pick your name first.");
       return;
     }
 
-    let memberId: string;
-    try {
-      const parsed = JSON.parse(raw) as { id?: string };
-      if (!parsed.id) {
-        alert("Pick your name first.");
-        return;
-      }
-      memberId = parsed.id;
-    } catch {
-      alert("Pick your name first.");
-      return;
-    }
-
-    await runAction(taskId, "claim", "/api/claim", { taskId, memberId }, "Failed to claim task");
+    await runAction(
+      taskId,
+      "claim",
+      "/api/claim",
+      { taskId, claimerName: member.name },
+      "Failed to claim task"
+    );
   }
 
   async function completeTask(taskId: string) {
@@ -270,27 +264,48 @@ export default function TaskList({
       "complete",
       "/api/complete",
       { taskId },
-      "Failed to mark task done"
+      "Failed to mark task done",
+      { refreshPage: true }
     );
   }
 
   async function releaseTask(taskId: string) {
+    const member = getStoredMember(boardId);
+    if (!member) {
+      alert("Pick your name first.");
+      return;
+    }
+
     await runAction(
       taskId,
       "release",
       "/api/release",
-      { taskId },
+      { taskId, claimerName: member.name },
       "Failed to release task"
     );
   }
 
+  function renderClaimersLabel(taskClaims: Claim[]): string {
+    if (taskClaims.length === 0) {
+      return "nobody yet";
+    }
+
+    const names = taskClaims.map((c) => c.claimer_name).join(", ");
+    const count = taskClaims.length;
+    return `${names} (${count} ${count === 1 ? "claimer" : "claimers"})`;
+  }
+
   function renderTaskCard(task: Task) {
-    const status = resolveTaskStatus(task);
-    const isUnclaimed = status === "unclaimed";
-    const isInProgress = status === "in_progress";
-    const assigneeLabel = task.assigned_member_id
-      ? `claimed by ${memberNames[task.assigned_member_id] ?? "someone"}`
-      : "nobody yet";
+    const taskClaims = claimsByTask.get(task.id) ?? [];
+    const status = resolveTaskStatus(task, taskClaims);
+    const isDone = status === "done";
+    const member = getStoredMember(boardId);
+    const hasClaimed =
+      !!member &&
+      taskClaims.some((c) => c.claimer_name === member.name);
+    const canClaim = !isDone && !hasClaimed;
+    const canRelease = !isDone && hasClaimed;
+    const canComplete = !isDone && taskClaims.length > 0;
 
     return (
       <li
@@ -300,12 +315,14 @@ export default function TaskList({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <p className="font-medium text-[#1A1A1A]">{task.title}</p>
-            <p className="mt-1 text-sm text-[#1A1A1A]/50">{assigneeLabel}</p>
+            <p className="mt-1 text-sm text-[#1A1A1A]/50">
+              {renderClaimersLabel(taskClaims)}
+            </p>
           </div>
           <StatusBadge status={status} />
         </div>
 
-        {isUnclaimed && (
+        {canClaim && (
           <button
             type="button"
             onClick={() => claimTask(task.id)}
@@ -316,24 +333,28 @@ export default function TaskList({
           </button>
         )}
 
-        {isInProgress && (
+        {(canComplete || canRelease) && (
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={() => completeTask(task.id)}
-              disabled={isTaskBusy(task.id)}
-              className="rounded-lg border border-green-600 px-3 py-1.5 text-xs font-medium text-green-700 transition-colors hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isPending(task.id, "complete") ? "Saving…" : "Mark done"}
-            </button>
-            <button
-              type="button"
-              onClick={() => releaseTask(task.id)}
-              disabled={isTaskBusy(task.id)}
-              className="text-xs text-[#1A1A1A]/45 transition-colors hover:text-[#1A1A1A]/70 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isPending(task.id, "release") ? "Releasing…" : "Release"}
-            </button>
+            {canComplete && (
+              <button
+                type="button"
+                onClick={() => completeTask(task.id)}
+                disabled={isTaskBusy(task.id)}
+                className="rounded-lg border border-green-600 px-3 py-1.5 text-xs font-medium text-green-700 transition-colors hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isPending(task.id, "complete") ? "Saving…" : "Mark done"}
+              </button>
+            )}
+            {canRelease && (
+              <button
+                type="button"
+                onClick={() => releaseTask(task.id)}
+                disabled={isTaskBusy(task.id)}
+                className="text-xs text-[#1A1A1A]/45 transition-colors hover:text-[#1A1A1A]/70 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isPending(task.id, "release") ? "Releasing…" : "Release"}
+              </button>
+            )}
           </div>
         )}
       </li>

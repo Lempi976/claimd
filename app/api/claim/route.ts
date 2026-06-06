@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export async function POST(request: Request) {
-  let body: { taskId?: string; memberId?: string };
+  let body: { taskId?: string; claimerName?: string };
 
   try {
     body = await request.json();
@@ -11,23 +11,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { taskId, memberId } = body;
+  const { taskId, claimerName } = body;
 
-  if (!taskId || !memberId) {
+  if (!taskId || !claimerName?.trim()) {
     return NextResponse.json(
-      { error: "taskId and memberId are required" },
+      { error: "taskId and claimerName are required" },
       { status: 400 }
     );
   }
 
   try {
     const { data, error } = await getSupabaseAdmin()
-      .from("tasks")
-      .update({
-        assigned_member_id: memberId,
-        status: "in_progress",
+      .from("claims")
+      .insert({
+        task_id: taskId,
+        claimer_name: claimerName.trim(),
       })
-      .eq("id", taskId)
       .select()
       .single();
 
@@ -37,7 +36,7 @@ export async function POST(request: Request) {
     }
 
     if (!data) {
-      return NextResponse.json({ error: "Task not found" }, { status: 404 });
+      return NextResponse.json({ error: "Failed to create claim" }, { status: 500 });
     }
 
     return NextResponse.json(data);

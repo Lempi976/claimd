@@ -25,14 +25,11 @@ export default async function BoardPage({
       .order("created_at"),
     supabase
       .from("tasks")
-      .select("id, title, status, assigned_member_id, event_id")
+      .select("id, title, status, event_id")
       .eq("board_id", id),
   ]);
 
   const boardName = board?.name ?? "Board";
-  const memberNames = Object.fromEntries(
-    (members ?? []).map((m) => [m.id, m.name])
-  );
 
   return (
     <main className="min-h-full bg-[#FAF6F1] text-[#1A1A1A]">
@@ -60,7 +57,6 @@ export default async function BoardPage({
               tasks={tasks}
               events={events ?? []}
               boardId={id}
-              memberNames={memberNames}
             />
           )}
         </section>
