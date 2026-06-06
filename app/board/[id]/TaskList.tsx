@@ -27,7 +27,7 @@ type Claim = {
 
 type TaskStatus = "unclaimed" | "in_progress" | "done";
 
-type PendingAction = "claim" | "complete" | "release";
+type PendingAction = "claim" | "complete" | "release" | "uncomplete";
 
 type TaskSection = {
   key: string;
@@ -275,6 +275,17 @@ export default function TaskList({
     );
   }
 
+  async function uncompleteTask(taskId: string) {
+    await runAction(
+      taskId,
+      "uncomplete",
+      "/api/uncomplete",
+      { taskId },
+      "Failed to undo task",
+      { refreshPage: true }
+    );
+  }
+
   async function releaseTask(taskId: string) {
     const claimerName = selectedMember?.name?.trim();
     if (!claimerName) {
@@ -314,6 +325,7 @@ export default function TaskList({
     const canClaim = !isDone && !hasClaimed;
     const canRelease = !isDone && hasClaimed;
     const canComplete = !isDone && hasClaimed;
+    const canUncomplete = isDone;
     const othersClaimed = claimers.length > 0 && !hasClaimed;
 
     return (
@@ -371,7 +383,7 @@ export default function TaskList({
           </div>
         )}
 
-        {(canComplete || canRelease) && (
+        {(canComplete || canRelease || canUncomplete) && (
           <div className="mt-4 flex flex-wrap items-center gap-3">
             {canComplete && (
               <button
@@ -391,6 +403,16 @@ export default function TaskList({
                 className="text-xs text-[#1A1A1A]/45 transition-colors hover:text-[#1A1A1A]/70 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isPending(task.id, "release") ? "Releasing…" : "Release"}
+              </button>
+            )}
+            {canUncomplete && (
+              <button
+                type="button"
+                onClick={() => uncompleteTask(task.id)}
+                disabled={isTaskBusy(task.id)}
+                className="text-xs text-[#1A1A1A]/45 transition-colors hover:text-[#1A1A1A]/70 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isPending(task.id, "uncomplete") ? "Undoing…" : "Undo"}
               </button>
             )}
           </div>
