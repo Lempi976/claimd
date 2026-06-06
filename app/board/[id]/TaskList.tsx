@@ -1,7 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import { supabase } from "@/lib/supabaseClient";
 
 type Event = {
   id: string;
@@ -14,6 +16,12 @@ type Task = {
   status: string;
   assigned_member_id: string | null;
   event_id: string | null;
+};
+
+type Claim = {
+  id: string;
+  task_id: string;
+  member_id: string;
 };
 
 type TaskStatus = "unclaimed" | "in_progress" | "done";
@@ -110,8 +118,26 @@ function buildTaskSections(events: Event[], tasks: Task[]): TaskSection[] {
   return sections;
 }
 
+function applyClaimsToTasks(tasks: Task[], claims: Claim[]): Task[] {
+  const claimMap = new Map(claims.map((claim) => [claim.task_id, claim.member_id]));
+
+  return tasks.map((task) => {
+    if (!claimMap.has(task.id)) {
+      return task;
+    }
+
+    const memberId = claimMap.get(task.id)!;
+
+    return {
+      ...task,
+      assigned_member_id: memberId,
+      status: task.status === "done" ? "done" : "in_progress",
+    };
+  });
+}
+
 export default function TaskList({
-  tasks,
+  tasks: initialTasks,
   events,
   boardId,
   memberNames,
@@ -122,14 +148,62 @@ export default function TaskList({
   memberNames: Record<string, string>;
 }) {
   const router = useRouter();
+  const [tasks, setTasks] = useState<Task[]>(initialTasks);
+  const [claims, setClaims] = useState<Claim[]>([]);
   const [pending, setPending] = useState<{
     taskId: string;
     action: PendingAction;
   } | null>(null);
 
+  useEffect(() => {
+    setTasks(initialTasks);
+  }, [initialTasks]);
+
+  const fetchClaims = useCallback(async (taskIds: string[]) => {
+    if (taskIds.length === 0) {
+      setClaims([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("claims")
+      .select("id, task_id, member_id")
+      .in("task_id", taskIds);
+
+    if (!error && data) {
+      setClaims(data);
+    }
+  }, []);
+
+  useEffect(() => {
+    const taskIds = tasks.map((task) => task.id);
+
+    void fetchClaims(taskIds);
+
+    const channel = supabase
+      .channel(`claims:${boardId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "claims" },
+        () => {
+          void fetchClaims(tasks.map((task) => task.id));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [boardId, tasks, fetchClaims]);
+
+  const displayTasks = useMemo(
+    () => applyClaimsToTasks(tasks, claims),
+    [tasks, claims]
+  );
+
   const sections = useMemo(
-    () => buildTaskSections(events, tasks),
-    [events, tasks]
+    () => buildTaskSections(events, displayTasks),
+    [events, displayTasks]
   );
 
   function isPending(taskId: string, action: PendingAction) {
