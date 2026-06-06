@@ -7,7 +7,7 @@ type Member = {
   name: string;
 };
 
-type StoredMember = {
+export type StoredMember = {
   id: string;
   name: string;
 };
@@ -19,9 +19,11 @@ function storageKey(boardId: string) {
 export default function NamePicker({
   members,
   boardId,
+  onMemberChange,
 }: {
   members: Member[];
   boardId: string;
+  onMemberChange?: (member: StoredMember | null) => void;
 }) {
   const [selected, setSelected] = useState<StoredMember | null>(null);
   const [ready, setReady] = useState(false);
@@ -33,23 +35,26 @@ export default function NamePicker({
         const parsed = JSON.parse(raw) as StoredMember;
         if (parsed.id && parsed.name) {
           setSelected(parsed);
+          onMemberChange?.(parsed);
         }
       } catch {
         localStorage.removeItem(storageKey(boardId));
       }
     }
     setReady(true);
-  }, [boardId]);
+  }, [boardId, onMemberChange]);
 
   function selectMember(member: Member) {
     const stored = { id: member.id, name: member.name };
     localStorage.setItem(storageKey(boardId), JSON.stringify(stored));
     setSelected(stored);
+    onMemberChange?.(stored);
   }
 
   function clearSelection() {
     localStorage.removeItem(storageKey(boardId));
     setSelected(null);
+    onMemberChange?.(null);
   }
 
   if (!ready) {

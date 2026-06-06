@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { supabase } from "@/lib/supabaseClient";
 
+import type { StoredMember } from "./NamePicker";
+
 type Event = {
   id: string;
   name: string;
@@ -23,11 +25,6 @@ type Claim = {
   claimer_name: string;
 };
 
-type StoredMember = {
-  id: string;
-  name: string;
-};
-
 type TaskStatus = "unclaimed" | "in_progress" | "done";
 
 type PendingAction = "claim" | "complete" | "release";
@@ -37,24 +34,6 @@ type TaskSection = {
   title: string;
   tasks: Task[];
 };
-
-function memberStorageKey(boardId: string) {
-  return `claimd_member_${boardId}`;
-}
-
-function getStoredMember(boardId: string): StoredMember | null {
-  const raw = localStorage.getItem(memberStorageKey(boardId));
-  if (!raw) return null;
-
-  try {
-    const parsed = JSON.parse(raw) as StoredMember;
-    if (parsed.id && parsed.name) return parsed;
-  } catch {
-    return null;
-  }
-
-  return null;
-}
 
 function resolveTaskStatus(task: Task, taskClaims: Claim[]): TaskStatus {
   if (task.status === "done") return "done";
@@ -148,10 +127,12 @@ export default function TaskList({
   tasks,
   events,
   boardId,
+  selectedMember,
 }: {
   tasks: Task[];
   events: Event[];
   boardId: string;
+  selectedMember: StoredMember | null;
 }) {
   const router = useRouter();
   const [claims, setClaims] = useState<Claim[]>([]);
@@ -243,8 +224,8 @@ export default function TaskList({
   }
 
   async function claimTask(taskId: string) {
-    const member = getStoredMember(boardId);
-    if (!member) {
+    const claimerName = selectedMember?.name?.trim();
+    if (!claimerName) {
       alert("Pick your name first.");
       return;
     }
@@ -253,7 +234,7 @@ export default function TaskList({
       taskId,
       "claim",
       "/api/claim",
-      { taskId, claimerName: member.name },
+      { taskId, claimerName },
       "Failed to claim task"
     );
   }
@@ -270,8 +251,8 @@ export default function TaskList({
   }
 
   async function releaseTask(taskId: string) {
-    const member = getStoredMember(boardId);
-    if (!member) {
+    const claimerName = selectedMember?.name?.trim();
+    if (!claimerName) {
       alert("Pick your name first.");
       return;
     }
@@ -280,7 +261,7 @@ export default function TaskList({
       taskId,
       "release",
       "/api/release",
-      { taskId, claimerName: member.name },
+      { taskId, claimerName },
       "Failed to release task"
     );
   }
@@ -299,10 +280,10 @@ export default function TaskList({
     const taskClaims = claimsByTask.get(task.id) ?? [];
     const status = resolveTaskStatus(task, taskClaims);
     const isDone = status === "done";
-    const member = getStoredMember(boardId);
+    const claimerName = selectedMember?.name;
     const hasClaimed =
-      !!member &&
-      taskClaims.some((c) => c.claimer_name === member.name);
+      !!claimerName &&
+      taskClaims.some((c) => c.claimer_name === claimerName);
     const canClaim = !isDone && !hasClaimed;
     const canRelease = !isDone && hasClaimed;
     const canComplete = !isDone && taskClaims.length > 0;
