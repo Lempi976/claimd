@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { supabase } from "@/lib/supabaseClient";
 
@@ -73,15 +73,15 @@ function StatusBadge({ status }: { status: TaskStatus }) {
   );
 }
 
-async function parseApiResponse(
+async function parseApiResponse<T = Record<string, unknown>>(
   res: Response,
   fallbackError: string
-): Promise<{ ok: true } | { ok: false; message: string }> {
-  let data: { error?: string } = {};
+): Promise<{ ok: true; data: T } | { ok: false; message: string }> {
+  let data: T & { error?: string } = {} as T & { error?: string };
   const text = await res.text();
   if (text) {
     try {
-      data = JSON.parse(text) as { error?: string };
+      data = JSON.parse(text) as T & { error?: string };
     } catch {
       return { ok: false, message: fallbackError };
     }
@@ -91,7 +91,7 @@ async function parseApiResponse(
     return { ok: false, message: data.error ?? fallbackError };
   }
 
-  return { ok: true };
+  return { ok: true, data: data as T };
 }
 
 function buildTaskSections(events: Event[], tasks: Task[]): TaskSection[] {
@@ -142,6 +142,8 @@ export default function TaskList({
   } | null>(null);
 
   const taskIds = useMemo(() => tasks.map((task) => task.id), [tasks]);
+  const taskIdsRef = useRef(taskIds);
+  taskIdsRef.current = taskIds;
 
   const fetchClaims = useCallback(async (ids: string[]) => {
     if (ids.length === 0) {
@@ -154,9 +156,12 @@ export default function TaskList({
       .select("id, task_id, claimer_name")
       .in("task_id", ids);
 
-    if (!error && data) {
-      setClaims(data);
+    if (error) {
+      console.error("[TaskList] fetchClaims error:", error);
+      return;
     }
+
+    setClaims(data ?? []);
   }, []);
 
   useEffect(() => {
@@ -168,7 +173,7 @@ export default function TaskList({
         "postgres_changes",
         { event: "*", schema: "public", table: "claims" },
         () => {
-          void fetchClaims(taskIds);
+          void fetchClaims(taskIdsRef.current);
         }
       )
       .subscribe((status) => console.log("Realtime status:", status));
@@ -193,14 +198,14 @@ export default function TaskList({
     return pending?.taskId === taskId;
   }
 
-  async function runAction(
+  async function runAction<T = Record<string, unknown>>(
     taskId: string,
     action: PendingAction,
     endpoint: string,
     body: Record<string, string>,
     fallbackError: string,
     options?: { refreshPage?: boolean }
-  ) {
+  ): Promise<T | null> {
     setPending({ taskId, action });
     try {
       const res = await fetch(endpoint, {
@@ -209,15 +214,17 @@ export default function TaskList({
         body: JSON.stringify(body),
       });
 
-      const result = await parseApiResponse(res, fallbackError);
+      const result = await parseApiResponse<T>(res, fallbackError);
       if (!result.ok) {
         alert(result.message);
-        return;
+        return null;
       }
 
       if (options?.refreshPage) {
         router.refresh();
       }
+
+      return result.data;
     } finally {
       setPending(null);
     }
@@ -230,13 +237,22 @@ export default function TaskList({
       return;
     }
 
-    await runAction(
+    const claim = await runAction<Claim>(
       taskId,
       "claim",
       "/api/claim",
       { taskId, claimerName },
       "Failed to claim task"
     );
+
+    if (claim?.id && claim.task_id) {
+      setClaims((prev) => {
+        if (prev.some((c) => c.id === claim.id)) return prev;
+        return [...prev, claim];
+      });
+    }
+
+    void fetchClaims(taskIdsRef.current);
   }
 
   async function completeTask(taskId: string) {
@@ -257,13 +273,25 @@ export default function TaskList({
       return;
     }
 
-    await runAction(
+    const released = await runAction<Claim>(
       taskId,
       "release",
       "/api/release",
       { taskId, claimerName },
       "Failed to release task"
     );
+
+    if (released?.id) {
+      setClaims((prev) => prev.filter((c) => c.id !== released.id));
+    } else {
+      setClaims((prev) =>
+        prev.filter(
+          (c) => !(c.task_id === taskId && c.claimer_name === claimerName)
+        )
+      );
+    }
+
+    void fetchClaims(taskIdsRef.current);
   }
 
   function renderClaimersLabel(taskClaims: Claim[]): string {
