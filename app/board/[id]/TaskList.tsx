@@ -51,6 +51,10 @@ function groupClaimsByTask(claims: Claim[]): Map<string, Claim[]> {
   return map;
 }
 
+function uniqueClaimerNames(taskClaims: Claim[]): string[] {
+  return [...new Set(taskClaims.map((claim) => claim.claimer_name))];
+}
+
 function StatusBadge({ status }: { status: TaskStatus }) {
   const styles: Record<TaskStatus, string> = {
     unclaimed: "bg-neutral-200 text-neutral-600",
@@ -123,19 +127,29 @@ function buildTaskSections(events: Event[], tasks: Task[]): TaskSection[] {
   return sections;
 }
 
+function mergeClaims(existing: Claim[], incoming: Claim[]): Claim[] {
+  const byId = new Map(existing.map((claim) => [claim.id, claim]));
+  for (const claim of incoming) {
+    byId.set(claim.id, claim);
+  }
+  return Array.from(byId.values());
+}
+
 export default function TaskList({
   tasks,
   events,
   boardId,
   selectedMember,
+  initialClaims,
 }: {
   tasks: Task[];
   events: Event[];
   boardId: string;
   selectedMember: StoredMember | null;
+  initialClaims: Claim[];
 }) {
   const router = useRouter();
-  const [claims, setClaims] = useState<Claim[]>([]);
+  const [claims, setClaims] = useState<Claim[]>(initialClaims);
   const [pending, setPending] = useState<{
     taskId: string;
     action: PendingAction;
@@ -246,13 +260,8 @@ export default function TaskList({
     );
 
     if (claim?.id && claim.task_id) {
-      setClaims((prev) => {
-        if (prev.some((c) => c.id === claim.id)) return prev;
-        return [...prev, claim];
-      });
+      setClaims((prev) => mergeClaims(prev, [claim]));
     }
-
-    void fetchClaims(taskIdsRef.current);
   }
 
   async function completeTask(taskId: string) {
@@ -283,29 +292,19 @@ export default function TaskList({
 
     if (released?.id) {
       setClaims((prev) => prev.filter((c) => c.id !== released.id));
-    } else {
-      setClaims((prev) =>
-        prev.filter(
-          (c) => !(c.task_id === taskId && c.claimer_name === claimerName)
-        )
-      );
+      return;
     }
 
-    void fetchClaims(taskIdsRef.current);
-  }
-
-  function renderClaimersLabel(taskClaims: Claim[]): string {
-    if (taskClaims.length === 0) {
-      return "nobody yet";
-    }
-
-    const names = taskClaims.map((c) => c.claimer_name).join(", ");
-    const count = taskClaims.length;
-    return `${names} (${count} ${count === 1 ? "claimer" : "claimers"})`;
+    setClaims((prev) =>
+      prev.filter(
+        (c) => !(c.task_id === taskId && c.claimer_name === claimerName)
+      )
+    );
   }
 
   function renderTaskCard(task: Task) {
     const taskClaims = claimsByTask.get(task.id) ?? [];
+    const claimers = uniqueClaimerNames(taskClaims);
     const status = resolveTaskStatus(task, taskClaims);
     const isDone = status === "done";
     const claimerName = selectedMember?.name;
@@ -314,7 +313,8 @@ export default function TaskList({
       taskClaims.some((c) => c.claimer_name === claimerName);
     const canClaim = !isDone && !hasClaimed;
     const canRelease = !isDone && hasClaimed;
-    const canComplete = !isDone && taskClaims.length > 0;
+    const canComplete = !isDone && hasClaimed;
+    const othersClaimed = claimers.length > 0 && !hasClaimed;
 
     return (
       <li
@@ -324,22 +324,51 @@ export default function TaskList({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <p className="font-medium text-[#1A1A1A]">{task.title}</p>
-            <p className="mt-1 text-sm text-[#1A1A1A]/50">
-              {renderClaimersLabel(taskClaims)}
-            </p>
+            <div className="mt-2">
+              {claimers.length === 0 ? (
+                <p className="text-sm text-[#1A1A1A]/50">Nobody yet</p>
+              ) : (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {claimers.map((name) => (
+                    <span
+                      key={name}
+                      className="rounded-full bg-[#E8542C]/10 px-2.5 py-0.5 text-xs font-medium text-[#C94520]"
+                    >
+                      {name}
+                    </span>
+                  ))}
+                  <span className="text-xs text-[#1A1A1A]/45">
+                    {claimers.length === 1
+                      ? "1 person"
+                      : `${claimers.length} people`}
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
           <StatusBadge status={status} />
         </div>
 
         {canClaim && (
-          <button
-            type="button"
-            onClick={() => claimTask(task.id)}
-            disabled={isTaskBusy(task.id)}
-            className="mt-4 rounded-lg bg-[#E8542C] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#D14A26] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isPending(task.id, "claim") ? "Claiming…" : "Claim"}
-          </button>
+          <div className="mt-4">
+            {othersClaimed && (
+              <p className="mb-2 text-xs text-[#1A1A1A]/50">
+                Others are on this — you can claim it too.
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => claimTask(task.id)}
+              disabled={isTaskBusy(task.id)}
+              className="rounded-lg bg-[#E8542C] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#D14A26] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isPending(task.id, "claim")
+                ? "Claiming…"
+                : othersClaimed
+                  ? "Claim too"
+                  : "Claim"}
+            </button>
+          </div>
         )}
 
         {(canComplete || canRelease) && (

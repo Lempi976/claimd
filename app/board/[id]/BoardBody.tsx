@@ -17,18 +17,26 @@ type Task = {
   event_id: string | null;
 };
 
+type Claim = {
+  id: string;
+  task_id: string;
+  claimer_name: string;
+};
+
 export default function BoardBody({
   boardId,
   boardName,
   members,
   events,
   tasks,
+  initialClaims,
 }: {
   boardId: string;
   boardName: string;
   members: { id: string; name: string }[];
   events: Event[];
   tasks: Task[];
+  initialClaims: Claim[];
 }) {
   const [selectedMember, setSelectedMember] = useState<StoredMember | null>(
     null
@@ -64,6 +72,7 @@ export default function BoardBody({
             events={events}
             boardId={boardId}
             selectedMember={selectedMember}
+            initialClaims={initialClaims}
           />
         )}
       </section>

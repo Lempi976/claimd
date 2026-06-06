@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 
 type Member = {
   id: string;
@@ -28,7 +28,7 @@ export default function NamePicker({
   const [selected, setSelected] = useState<StoredMember | null>(null);
   const [ready, setReady] = useState(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const raw = localStorage.getItem(storageKey(boardId));
     if (raw) {
       try {

@@ -21,11 +21,30 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { data, error } = await getSupabaseAdmin()
+    const trimmedName = claimerName.trim();
+    const admin = getSupabaseAdmin();
+
+    const { data: existing, error: existingError } = await admin
+      .from("claims")
+      .select()
+      .eq("task_id", taskId)
+      .eq("claimer_name", trimmedName)
+      .maybeSingle();
+
+    if (existingError) {
+      console.error("[api/claim] lookup error:", existingError);
+      return NextResponse.json({ error: existingError.message }, { status: 500 });
+    }
+
+    if (existing) {
+      return NextResponse.json(existing);
+    }
+
+    const { data, error } = await admin
       .from("claims")
       .insert({
         task_id: taskId,
-        claimer_name: claimerName.trim(),
+        claimer_name: trimmedName,
       })
       .select()
       .single();

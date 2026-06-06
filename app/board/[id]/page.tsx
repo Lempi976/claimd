@@ -28,6 +28,17 @@ export default async function BoardPage({
       .eq("board_id", id),
   ]);
 
+  const taskList = tasks ?? [];
+  const taskIds = taskList.map((task) => task.id);
+
+  const { data: claims } =
+    taskIds.length > 0
+      ? await supabase
+          .from("claims")
+          .select("id, task_id, claimer_name")
+          .in("task_id", taskIds)
+      : { data: [] as { id: string; task_id: string; claimer_name: string }[] };
+
   const boardName = board?.name ?? "Board";
 
   return (
@@ -38,7 +49,8 @@ export default async function BoardPage({
           boardName={boardName}
           members={members ?? []}
           events={events ?? []}
-          tasks={tasks ?? []}
+          tasks={taskList}
+          initialClaims={claims ?? []}
         />
       </div>
     </main>
